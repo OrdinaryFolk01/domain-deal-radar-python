@@ -1,0 +1,4 @@
+domain,title,baiduPcWeight,baiduMobileWeight,indexedCount,sogouWeight,soWeight,smWeight,toutiaoWeight,bingWeight,sogouIndexedCount,soIndexedCount,smIndexedCount,toutiaoIndexedCount,bingIndexedCount,icpType,lastUpdate,remark
+example.com,考研资料网,2,2,3500,1,1,0,0,1,1200,900,0,0,450,个人,2023-01-01,长期未更新
+demo.cn,AI工具导航,1,3,8000,0,2,1,0,0,0,2300,600,0,0,个人,2024-08-01,
+abc.com,彩票软件,4,4,50000,3,3,1,0,1,20000,12000,800,0,3500,企业,2024-01-01,疑似灰产

@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <h1>域名交易雷达</h1>
+        <!-- <p>导入爱站/权重综合 CSV，批量筛选、评分、抓取联系方式、增强分析、话术编辑、一键邮件、跟进成交。</p> -->
+      </div>
+      <div class="hero-actions">
+        <select id="providerSelect" title="数据源 Provider">
+          <option value="generic_csv">通用 CSV</option>
+        </select>
+        <button id="manualLeadBtn" class="primary">手动新增域名</button>
+        <label class="button primary">
+          导入数据源 CSV
+          <input id="csvFile" type="file" accept=".csv,.txt,text/csv,text/plain" hidden />
+        </label>
+        <label class="button">
+          恢复 JSON
+          <input id="jsonFile" type="file" accept=".json,application/json" hidden />
+        </label>
+        <button id="backupJsonBtn">备份 JSON</button>
+        <button id="exportCsvBtn">导出 CSV</button>
+      </div>
+    </header>
+
+    <nav class="workspace-tabs" aria-label="工作区切换">
+      <button class="workspace-tab active" data-view="leads">线索管理</button>
+      <button class="workspace-tab" data-view="tasks">任务中心</button>
+      <button class="workspace-tab" data-view="discovery">发现中心</button>
+    </nav>
+
+    <section id="workspace-leads" class="workspace-view active">
+      <section class="cards">
+        <div class="card">
+          <span>线索总数</span>
+          <strong id="statTotal">0</strong>
+        </div>
+        <div class="card">
+          <span>高优先级</span>
+          <strong id="statHigh">0</strong>
+        </div>
+        <div class="card">
+          <span>抓取成功</span>
+          <strong id="statCrawlSuccess">0</strong>
+        </div>
+        <div class="card">
+          <span>待跟进</span>
+          <strong id="statFollowUpDue">0</strong>
+        </div>
+        <div class="card">
+          <span>已买入 / 放弃</span>
+          <strong><span id="statBought">0</span> / <span id="statGiveUp">0</span></strong>
+        </div>
+      </section>
+
+      <section class="workspace-panel">
+        <div class="section-copy">
+          <h2>线索库</h2>
+          <p>筛选、比较、尽调、批量处理都放在这里，先决定哪些机会值得继续看。</p>
+          <p class="subtle-note">平台权重 / 平台收录当前来自导入数据源，不会随着抓取动作自动补全。</p>
+        </div>
+        <div class="toolbar split-toolbar">
+          <div class="toolbar-group filters">
+            <input id="keyword" placeholder="搜索域名 / 标题 / 备注 / 备案" />
+            <select id="statusFilter">
+              <option value="">全部跟进状态</option>
+              <option value="NEW">新线索</option>
+              <option value="CHECKED">已检查</option>
+              <option value="CONTACTED">已联系</option>
+              <option value="REPLIED">已回复</option>
+              <option value="NEGOTIATING">谈价中</option>
+              <option value="BOUGHT">已买入</option>
+              <option value="RESOLD">已转卖</option>
+              <option value="GIVE_UP">已放弃</option>
+            </select>
+            <select id="crawlStatusFilter">
+              <option value="">全部抓取状态</option>
+              <option value="PENDING">待抓取</option>
+              <option value="RUNNING">抓取中</option>
+              <option value="SUCCESS">抓取成功</option>
+              <option value="FAILED">抓取失败</option>
+            </select>
+            <select id="riskFilter">
+              <option value="">风险不限</option>
+              <option value="no_risk">无风险标记</option>
+              <option value="has_risk">有风险标记</option>
+            </select>
+            <input id="minScore" type="number" min="0" placeholder="最低评分" />
+            <button id="searchBtn">筛选</button>
+            <button id="resetBtn">重置</button>
+          </div>
+          <div class="toolbar-group actions">
+            <button id="batchCrawlBtn" class="primary">批量抓取</button>
+            <button id="batchAnalysisBtn">批量增强分析</button>
+            <button id="batchRegistrationBtn">批量查注册</button>
+            <button id="batchHistoryBtn">批量查历史</button>
+            <button id="clearBtn" class="danger ghost">清空数据</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>域名</th>
+              <th>标题</th>
+              <th>平台权重</th>
+              <th>平台收录</th>
+              <th>备案</th>
+              <th>评分</th>
+              <th>报价</th>
+              <th>联系方式 / 抓取</th>
+              <th>风险</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="leadRows"></tbody>
+        </table>
+      </section>
+    </section>
+
+    <section id="workspace-tasks" class="workspace-view">
+      <section class="workspace-panel">
+        <div class="section-head stacked-mobile">
+          <div class="section-copy">
+            <h2>任务中心</h2>
+            <p>这里专门看执行中的工作：批量抓取、失败重试、异常定位。</p>
+          </div>
+          <div class="toolbar-group actions">
+            <button id="retryFailedBtn">重试失败</button>
+            <button id="refreshTasksBtn">刷新任务</button>
+          </div>
+        </div>
+        <div class="table-wrap compact">
+          <table>
+            <thead>
+              <tr>
+                <th>批次</th>
+                <th>域名</th>
+                <th>状态</th>
+                <th>页面</th>
+                <th>错误</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody id="taskRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="workspace-discovery" class="workspace-view">
+      <section class="workspace-panel">
+        <div class="section-head stacked-mobile">
+          <div class="section-copy">
+            <h2>发现中心</h2>
+            <p>一条路造候选域名，一条路从中文搜索结果里捞真实站点，再继续外链扩张。</p>
+          </div>
+          <div class="toolbar-group actions">
+            <button id="keywordDiscoveryBtn">关键词种子</button>
+            <button id="searchDiscoveryBtn" class="primary">中文搜索发现</button>
+            <button id="externalDiscoveryBtn">外链发现</button>
+            <button id="refreshDiscoveryTasksBtn">刷新发现任务</button>
+          </div>
+        </div>
+        <div class="table-wrap compact">
+          <table>
+            <thead>
+              <tr>
+                <th>数据源</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>新增/更新</th>
+                <th>关键词/来源</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody id="discoveryTaskRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </div>
+
+  <dialog id="manualLeadDialog">
+    <div class="dialog-head">
+      <h2>手动新增域名</h2>
+      <button id="closeManualLeadBtn" class="icon-btn">×</button>
+    </div>
+
+    <label class="block-label">域名 / URL
+      <textarea id="manualDomains" rows="8" placeholder="支持单个或多个，一行一个，也支持逗号/空格分隔：
+example.com
+https://www.demo.cn/contact
+aixuexi.com, kaoyan123.cn"></textarea>
+    </label>
+
+    <div class="dialog-grid">
+      <label>默认标题，可不填
+        <input id="manualTitle" placeholder="例如：考研资料站" />
+      </label>
+      <label>备注，可不填
+        <input id="manualRemark" placeholder="例如：朋友推荐 / 需要询价" />
+      </label>
+    </div>
+
+    <div class="manual-options">
+      <label><input id="manualAutoCrawl" type="checkbox" /> 新增后立即抓取联系方式</label>
+      <label><input id="manualAutoAnalyze" type="checkbox" /> 新增后立即增强分析</label>
+    </div>
+
+    <div class="dialog-actions">
+      <button id="cancelManualLeadBtn">取消</button>
+      <button id="submitManualLeadBtn" class="primary">新增到线索库</button>
+    </div>
+  </dialog>
+
+  <dialog id="detailDialog">
+    <div class="dialog-head">
+      <div class="dialog-title-wrap">
+        <h2 id="dialogTitle">线索详情</h2>
+        <div id="dialogTitleLinks" class="dialog-title-links"></div>
+      </div>
+      <button id="closeDialogBtn" class="icon-btn">×</button>
+    </div>
+
+    <div class="dialog-grid">
+      <label>状态
+        <select id="editStatus">
+          <option value="NEW">新线索</option>
+          <option value="CHECKED">已检查</option>
+          <option value="CONTACTED">已联系</option>
+          <option value="REPLIED">已回复</option>
+          <option value="NEGOTIATING">谈价中</option>
+          <option value="BOUGHT">已买入</option>
+          <option value="RESOLD">已转卖</option>
+          <option value="GIVE_UP">已放弃</option>
+        </select>
+      </label>
+      <label>买入价
+        <input id="editDealPrice" type="number" min="0" />
+      </label>
+      <label>转售价
+        <input id="editResellPrice" type="number" min="0" />
+      </label>
+      <label>放弃原因
+        <input id="editGiveUpReason" />
+      </label>
+      <label>下次跟进
+        <input id="editNextFollowUpAt" type="datetime-local" />
+      </label>
+      <label>下一步动作
+        <input id="editNextAction" placeholder="例如：三天后追问报价" />
+      </label>
+    </div>
+
+    <label class="block-label">跟进记录
+      <textarea id="editContactNote" rows="4"></textarea>
+    </label>
+    <label class="block-label">备注
+      <textarea id="editRemark" rows="3"></textarea>
+    </label>
+
+    <div class="detail-info" id="detailInfo"></div>
+
+    <div class="message-box profile-box">
+      <div class="message-actions">
+        <strong>线索画像</strong>
+      </div>
+      <div id="profileInfo" class="profile-grid"></div>
+    </div>
+
+    <div class="message-box">
+      <div class="message-actions">
+        <strong>评分拆解</strong>
+      </div>
+      <div id="scoreBreakdown" class="breakdown-list"></div>
+    </div>
+
+    <div class="message-box">
+      <div class="message-actions">
+        <strong>联系话术 / 邮件正文（可直接编辑，保存后会覆盖该线索默认话术）</strong>
+        <button id="copyMessageBtn">复制话术</button>
+      </div>
+      <textarea id="messageText" rows="7"></textarea>
+    </div>
+
+    <div class="message-box email-box">
+      <div class="message-actions">
+        <strong>一键发送邮件</strong>
+        <button id="sendEmailBtn" class="primary">发送邮件</button>
+      </div>
+      <div class="email-grid">
+        <label>收件人邮箱
+          <input id="emailTo" placeholder="自动取第一条邮箱，也可手动修改" />
+        </label>
+        <label>邮件主题
+          <input id="emailSubject" placeholder="咨询域名是否考虑转让" />
+        </label>
+      </div>
+      <p class="muted">发送前请先在 .env 配置 SMTP。建议用邮箱服务商的 SMTP 授权码，不要使用网页登录密码。</p>
+    </div>
+
+    <div class="message-box">
+      <div class="message-actions">
+        <strong>邮件记录</strong>
+        <button id="refreshEmailLogsBtn">刷新邮件记录</button>
+      </div>
+      <div id="emailLogs" class="log-list">暂无邮件记录</div>
+    </div>
+
+    <div class="message-box">
+      <div class="message-actions">
+        <strong>跟进时间线</strong>
+        <button id="refreshActivitiesBtn">刷新时间线</button>
+      </div>
+      <div id="activityLogs" class="log-list">暂无跟进记录</div>
+    </div>
+
+    <div class="message-box">
+      <div class="message-actions">
+        <strong>抓取日志</strong>
+        <button id="refreshLogsBtn">刷新日志</button>
+      </div>
+      <div id="crawlLogs" class="log-list">暂无日志</div>
+    </div>
+
+    <div class="dialog-actions">
+      <button id="crawlBtn">抓取该线索</button>
+      <button id="analyzeBtn">增强分析</button>
+      <button id="registrationBtn">查注册信息</button>
+      <button id="historyBtn">查历史画像</button>
+      <button id="rescoreBtn">重新评分</button>
+      <button id="saveBtn" class="primary">保存</button>
+      <button id="deleteBtn" class="danger">删除</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+
+</html>
