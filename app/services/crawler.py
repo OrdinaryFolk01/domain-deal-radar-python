@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urljoin
 
-import httpx
+from scrapling.fetchers import FetcherSession
 
 from app.services.contact_extract import discover_contact_links, extract_contacts, extract_title
+
+logging.getLogger("scrapling").setLevel(logging.WARNING)
 
 COMMON_CONTACT_PATHS = [
     "/contact",
@@ -22,6 +26,13 @@ COMMON_CONTACT_PATHS = [
     "/plus/list.php?tid=1",
     "/plus/list.php?tid=2",
 ]
+
+SCRAPLING_HEADERS = {
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    # Scrapling's stealthy headers add a browser-like referer by default.
+    # Keep this crawler neutral because target URLs come from lead data.
+    "Referer": "",
+}
 
 
 @dataclass(slots=True)
@@ -81,16 +92,36 @@ def _merge_contacts(pages: list[PageCrawlResult]) -> dict[str, list[str]]:
     }
 
 
-async def fetch_page(client: httpx.AsyncClient, url: str) -> PageCrawlResult:
+def _response_header(response: Any, name: str) -> str:
+    headers = getattr(response, "headers", {}) or {}
+    return str(headers.get(name) or headers.get(name.lower()) or headers.get(name.title()) or "")
+
+
+def _response_html(response: Any) -> str:
+    content_type = _response_header(response, "content-type").lower()
+    if content_type and "text/html" not in content_type and "application/xhtml+xml" not in content_type and "charset" not in content_type:
+        return ""
+
+    html_content = getattr(response, "html_content", "")
+    if html_content:
+        return str(html_content)
+
+    body = getattr(response, "body", b"")
+    if isinstance(body, bytes):
+        encoding = getattr(response, "encoding", "utf-8") or "utf-8"
+        return body.decode(encoding, errors="ignore")
+    return str(body or "")
+
+
+async def fetch_page(client: Any, url: str) -> PageCrawlResult:
     try:
         resp = await client.get(url)
-        content_type = resp.headers.get("content-type", "")
-        html = resp.text if "text/html" in content_type or "charset" in content_type else ""
+        html = _response_html(resp)
         contacts = extract_contacts(html)
         return PageCrawlResult(
             url=url,
-            status_code=str(resp.status_code),
-            final_url=str(resp.url),
+            status_code=str(getattr(resp, "status", "") or ""),
+            final_url=str(getattr(resp, "url", "") or ""),
             title=extract_title(html),
             emails=contacts["emails"],
             phones=contacts["phones"],
@@ -102,7 +133,7 @@ async def fetch_page(client: httpx.AsyncClient, url: str) -> PageCrawlResult:
         return PageCrawlResult(url=url, error=str(exc))
 
 
-async def _fetch_best_home(client: httpx.AsyncClient, domain: str) -> PageCrawlResult:
+async def _fetch_best_home(client: Any, domain: str) -> PageCrawlResult:
     last_result = PageCrawlResult(url=f"https://{domain}", error="未开始")
     for url in [f"https://{domain}", f"http://{domain}"]:
         result = await fetch_page(client, url)
@@ -128,10 +159,14 @@ def _build_contact_urls(home: PageCrawlResult, *, max_pages: int) -> list[str]:
 
 
 async def crawl_site(domain: str, *, timeout_seconds: int = 8, max_pages: int = 8) -> CrawlResult:
-    async with httpx.AsyncClient(
-        follow_redirects=True,
+    async with FetcherSession(
+        impersonate="chrome",
+        stealthy_headers=True,
+        headers=SCRAPLING_HEADERS,
+        follow_redirects="safe",
+        retries=1,
+        retry_delay=1,
         timeout=timeout_seconds,
-        headers={"User-Agent": "Mozilla/5.0 DomainDealRadar/1.0; local-research-tool"},
     ) as client:
         home = await _fetch_best_home(client, domain)
         if not home.status_code and not home.final_url:
