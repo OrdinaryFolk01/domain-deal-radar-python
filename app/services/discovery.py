@@ -4,7 +4,6 @@ import base64
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
-import httpx
 import tldextract
 from bs4 import BeautifulSoup
 from sqlalchemy import desc, select
@@ -17,6 +16,7 @@ from app.services.crawl_tasks import run_crawl_batch
 from app.services.import_export import upsert_leads_from_rows
 from app.services.scoring import normalize_domain
 from app.services.seed_generation import generate_seed_domains, normalize_seed_keywords
+from app.services.scrapling_fetch import build_url, create_scrapling_session, raise_for_status, response_text
 
 SEARCH_EXCLUDED_DOMAINS = {
     "bing.com",
@@ -125,15 +125,12 @@ async def search_web_domains(query: str, *, limit: int = 10, timeout_seconds: in
         "count": min(max(limit * 3, 10), 50),
         "setlang": "zh-hans",
     }
-    async with httpx.AsyncClient(
-        timeout=timeout_seconds,
-        follow_redirects=True,
-        headers={"User-Agent": "Mozilla/5.0 DomainDealRadar/1.0; local-research-tool"},
-    ) as client:
-        response = await client.get("https://www.bing.com/search", params=params)
-        response.raise_for_status()
+    async with create_scrapling_session(timeout_seconds=timeout_seconds) as client:
+        response = await client.get(build_url("https://www.bing.com/search", params))
+        raise_for_status(response)
+        html = response_text(response)
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
     for anchor in soup.select("li.b_algo h2 a"):

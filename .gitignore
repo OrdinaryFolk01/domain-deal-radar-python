@@ -2,8 +2,11 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+node_modules/
+*.tsbuildinfo
 .env
 .DS_Store
 data/*.db
+data/*.db-*
 data/*.sqlite
 out/

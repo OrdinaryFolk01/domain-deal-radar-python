@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.models import DomainLead
 from app.services.activities import build_activity
 from app.services.scoring import normalize_domain
+from app.services.scrapling_fetch import create_scrapling_session, raise_for_status, response_json, response_status
 
 IANA_RDAP_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json"
 _BOOTSTRAP_CACHE: dict[str, object] | None = None
@@ -94,14 +94,14 @@ def _find_service_base_url(domain: str, bootstrap: dict[str, object]) -> str:
     return best_urls[0] if best_urls else ""
 
 
-async def _load_bootstrap(client: httpx.AsyncClient) -> dict[str, object]:
+async def _load_bootstrap(client: object) -> dict[str, object]:
     global _BOOTSTRAP_CACHE, _BOOTSTRAP_FETCHED_AT
     now = datetime.utcnow()
     if _BOOTSTRAP_CACHE is not None and _BOOTSTRAP_FETCHED_AT and now - _BOOTSTRAP_FETCHED_AT < timedelta(hours=24):
         return _BOOTSTRAP_CACHE
     response = await client.get(IANA_RDAP_BOOTSTRAP_URL)
-    response.raise_for_status()
-    payload = response.json()
+    raise_for_status(response)
+    payload = response_json(response)
     if not isinstance(payload, dict):
         raise RuntimeError("IANA RDAP bootstrap 返回格式异常")
     _BOOTSTRAP_CACHE = payload
@@ -115,7 +115,7 @@ async def lookup_registration(domain: str, *, timeout_seconds: int = 12) -> Regi
         return RegistrationLookupResult(status="UNKNOWN", error="域名格式无效")
 
     headers = {"Accept": "application/rdap+json, application/json"}
-    async with httpx.AsyncClient(timeout=timeout_seconds, headers=headers, follow_redirects=True) as client:
+    async with create_scrapling_session(timeout_seconds=timeout_seconds, headers=headers) as client:
         try:
             bootstrap = await _load_bootstrap(client)
             base_url = _find_service_base_url(normalized, bootstrap)
@@ -124,10 +124,10 @@ async def lookup_registration(domain: str, *, timeout_seconds: int = 12) -> Regi
 
             query_url = urljoin(base_url if base_url.endswith("/") else f"{base_url}/", f"domain/{normalized}")
             response = await client.get(query_url)
-            if response.status_code == 404:
+            if response_status(response) == 404:
                 return RegistrationLookupResult(status="AVAILABLE", source_url=query_url)
-            response.raise_for_status()
-            payload = response.json()
+            raise_for_status(response)
+            payload = response_json(response)
             if not isinstance(payload, dict):
                 return RegistrationLookupResult(status="UNKNOWN", source_url=query_url, error="RDAP 返回格式异常")
 

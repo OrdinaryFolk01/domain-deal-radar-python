@@ -122,6 +122,35 @@ class DomainLead(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DomainCandidate(Base):
+    __tablename__ = "domain_candidates"
+    __table_args__ = (UniqueConstraint("domain", name="uq_domain_candidates_domain"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    domain: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    root_domain: Mapped[str] = mapped_column(String(255), default="")
+    suffix: Mapped[str] = mapped_column(String(64), default="")
+    title: Mapped[str] = mapped_column(String(500), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    search_engine: Mapped[str] = mapped_column(String(80), default="", index=True)
+    search_engines: Mapped[str] = mapped_column(Text, default="[]")
+    keyword: Mapped[str] = mapped_column(String(255), default="", index=True)
+    keywords: Mapped[str] = mapped_column(Text, default="[]")
+    source_url: Mapped[str] = mapped_column(String(1200), default="")
+    source_urls: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(50), default="DISCOVERED", index=True)
+    reject_reason: Mapped[str] = mapped_column(Text, default="")
+    weight_snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    site_index_snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    whois_snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    ip_snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    contact_snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    priority_score: Mapped[int] = mapped_column(Integer, default=0)
+    promoted_lead_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("domain_leads.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class CrawlTask(Base):
     __tablename__ = "crawl_tasks"
 
@@ -184,6 +213,14 @@ class LeadActivity(Base):
     title: Mapped[str] = mapped_column(String(255), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class DiscoveryTask(Base):

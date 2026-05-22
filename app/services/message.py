@@ -15,9 +15,7 @@ def build_contact_message(lead: DomainLead) -> str:
     domain = lead.domain
     return f"""你好，我看到你名下这个域名 {domain}，想问下这个域名后续有没有转让考虑？
 
-如果你愿意出，可以直接说一个心理价位，我这边合适的话可以走平台或注册商过户。
-
-方便的话，也可以留个微信继续沟通。"""
+如果你愿意出，可以直接说一个心理价位，方便的话，也可以留个微信继续沟通。"""
 
 
 def build_email_subject(lead: DomainLead) -> str:

@@ -165,14 +165,63 @@
       <section class="workspace-panel">
         <div class="section-head stacked-mobile">
           <div class="section-copy">
-            <h2>发现中心</h2>
-            <p>一条路造候选域名，一条路从中文搜索结果里捞真实站点，再继续外链扩张。</p>
+            <h2>雷达发现</h2>
+            <p>先把搜索结果放进候选池，经过 site 索引、权重、网站性质和情报核验后，再转入正式线索库。</p>
+          </div>
+        </div>
+        <div class="toolbar split-toolbar">
+          <div class="toolbar-group filters">
+            <select id="radarSearchEngines" multiple size="2" title="搜索引擎"></select>
+            <select id="radarKeywordMode" title="关键词模式">
+              <option value="manual">手动关键词</option>
+              <option value="random">随机词库</option>
+            </select>
+            <input id="radarKeywords" placeholder="关键词，支持逗号/换行，例如：考研资料,图片压缩" />
+            <input id="candidateKeyword" placeholder="筛选候选域名 / 关键词 / 原因" />
+            <select id="candidateStatusFilter">
+              <option value="">全部候选状态</option>
+              <option value="DISCOVERED">已发现</option>
+              <option value="NEED_SITE_INDEX">待补 site 索引</option>
+              <option value="NEED_WEIGHT">待补权重/性质</option>
+              <option value="QUALIFIED">已合格</option>
+              <option value="REJECTED">已淘汰</option>
+              <option value="PROMOTED">已入库</option>
+            </select>
           </div>
           <div class="toolbar-group actions">
+            <button id="radarDiscoveryBtn" class="primary">雷达搜索</button>
+            <button id="batchQualifyCandidatesBtn">批量预筛候选</button>
+            <button id="refreshCandidatesBtn">刷新候选池</button>
             <button id="keywordDiscoveryBtn">关键词种子</button>
-            <button id="searchDiscoveryBtn" class="primary">中文搜索发现</button>
+            <button id="searchDiscoveryBtn">旧版中文搜索</button>
             <button id="externalDiscoveryBtn">外链发现</button>
             <button id="refreshDiscoveryTasksBtn">刷新发现任务</button>
+          </div>
+        </div>
+        <div class="table-wrap compact">
+          <table>
+            <thead>
+              <tr>
+                <th>候选域名</th>
+                <th>来源</th>
+                <th>状态</th>
+                <th>site 索引</th>
+                <th>权重/性质</th>
+                <th>Whois/IP</th>
+                <th>原因</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="candidateRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="workspace-panel">
+        <div class="section-head stacked-mobile">
+          <div class="section-copy">
+            <h2>旧版发现任务</h2>
+            <p>保留原有关键词种子、Bing 搜索和外链发现记录，作为辅助入口。</p>
           </div>
         </div>
         <div class="table-wrap compact">

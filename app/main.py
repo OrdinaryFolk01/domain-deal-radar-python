@@ -5,7 +5,7 @@ import json
 from typing import Annotated
 from datetime import datetime
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi import Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -15,14 +15,37 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db, init_db
-from app.models import CrawlLog, CrawlTask, DiscoveryTask, DomainLead, EmailLog, LeadActivity
+from app.models import CrawlLog, CrawlTask, DiscoveryTask, DomainCandidate, DomainLead, EmailLog, LeadActivity
 from app.providers import ProviderError, list_providers
-from app.schemas import CrawlLogOut, CrawlTaskOut, DiscoveryTaskOut, EmailLogOut, EmailSendRequest, EmailSendResponse, LeadActivityOut, LeadOut, LeadUpdate, ManualLeadCreate, SearchDiscoveryRequest, SeedDiscoveryRequest
+from app.schemas import (
+    CandidateBatchQualifyRequest,
+    CandidatePromoteRequest,
+    CandidateSiteIndexRequest,
+    CandidateWeightCheckRequest,
+    CrawlLogOut,
+    CrawlTaskOut,
+    DiscoveryTaskOut,
+    DomainCandidateOut,
+    EmailLogOut,
+    EmailSendRequest,
+    EmailSendResponse,
+    EmailSettingsOut,
+    EmailSettingsUpdate,
+    LeadActivityOut,
+    LeadOut,
+    LeadUpdate,
+    ManualLeadCreate,
+    RadarDiscoveryStartRequest,
+    SearchDiscoveryRequest,
+    SearchEngineOut,
+    SeedDiscoveryRequest,
+)
 from app.services.activities import build_activity
 from app.services.analysis import analyze_lead, run_analysis_batch
 from app.services.crawl_tasks import run_crawl_batch
 from app.services.discovery import discover_from_external_links, discover_from_search_results, import_seed_keywords, list_discovery_tasks
 from app.services.email_sender import EmailSendError, send_lead_email
+from app.services.email_settings import save_email_settings, serialize_email_settings
 from app.services.import_export import (
     export_csv,
     export_json,
@@ -35,6 +58,7 @@ from app.services.import_export import (
 from app.services.message import build_contact_message, build_detail_message, build_email_subject
 from app.services.lead_profile import build_lead_profile
 from app.services.history import refresh_history_for_lead
+from app.services.radar import CandidateQualificationPipeline, CandidateRepository, ProviderRegistry, RadarDiscoveryPipeline
 from app.services.registration import refresh_registration_for_lead
 from app.services.scoring import score_lead
 
@@ -53,6 +77,9 @@ def on_startup() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
+    frontend_index = BASE_DIR / "static" / "frontend" / "index.html"
+    if frontend_index.exists():
+        return HTMLResponse(frontend_index.read_text(encoding="utf-8"))
     return templates.TemplateResponse("index.html", {"request": request, "app_name": settings.app_name})
 
 
@@ -131,6 +158,13 @@ def update_lead(lead_id: int, payload: LeadUpdate, db: Annotated[Session, Depend
     previous_note = lead.contact_note
     previous_follow_up = lead.next_follow_up_at
     previous_action = lead.next_action
+    contact_fields = {
+        "emails": "邮箱",
+        "phones": "电话",
+        "wechats": "微信",
+        "qqs": "QQ",
+    }
+    previous_contacts = {field: getattr(lead, field) for field in contact_fields}
 
     for field, value in updates.items():
         current_value = getattr(lead, field)
@@ -180,6 +214,20 @@ def update_lead(lead_id: int, payload: LeadUpdate, db: Annotated[Session, Depend
                 detail=lead.next_action,
             )
         )
+    changed_contact_fields = [
+        label
+        for field, label in contact_fields.items()
+        if field in updates and getattr(lead, field) != previous_contacts[field]
+    ]
+    if changed_contact_fields:
+        db.add(
+            build_activity(
+                lead,
+                event_type="CONTACTS_UPDATED",
+                title="联系方式已更新",
+                detail="、".join(changed_contact_fields),
+            )
+        )
 
     db.commit()
     db.refresh(lead)
@@ -203,6 +251,123 @@ def delete_lead(lead_id: int, db: Annotated[Session, Depends(get_db)]) -> dict[s
 @app.get("/api/providers")
 def get_data_source_providers() -> list[dict[str, object]]:
     return list_providers()
+
+
+@app.get("/api/search-engines", response_model=list[SearchEngineOut])
+def get_search_engines() -> list[dict[str, object]]:
+    enabled_ids = {item.strip() for item in settings.search_engines.replace("，", ",").split(",") if item.strip()}
+    return ProviderRegistry().list_search_engines(enabled_ids=enabled_ids)
+
+
+@app.post("/api/radar/discovery/start")
+async def start_radar_discovery(
+    payload: RadarDiscoveryStartRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, object]:
+    pipeline = RadarDiscoveryPipeline(db)
+    try:
+        return await pipeline.run(
+            keywords=payload.keywords,
+            keyword_mode=payload.keyword_mode,
+            search_engines=payload.search_engines,
+            limit=payload.limit,
+            auto_qualify=payload.auto_qualify,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/candidates", response_model=list[DomainCandidateOut])
+def list_candidates(
+    db: Annotated[Session, Depends(get_db)],
+    status: str = Query(default=""),
+    keyword: str = Query(default=""),
+    sources: str = Query(default=""),
+    ids: str = Query(default=""),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> list[DomainCandidate]:
+    source_filter = [item.strip() for item in sources.replace("，", ",").split(",") if item.strip()]
+    id_filter = [int(item) for item in ids.replace("，", ",").split(",") if item.strip().isdigit()] if ids else None
+    return CandidateRepository(db).list(status=status, keyword=keyword, sources=source_filter, ids=id_filter, limit=limit)
+
+
+def _get_candidate_or_404(db: Session, candidate_id: int) -> DomainCandidate:
+    candidate = CandidateRepository(db).get(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="候选不存在")
+    return candidate
+
+
+@app.post("/api/candidates/{candidate_id}/site-index", response_model=DomainCandidateOut)
+async def refresh_candidate_site_index(
+    candidate_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    payload: CandidateSiteIndexRequest | None = Body(default=None),
+) -> DomainCandidate:
+    candidate = _get_candidate_or_404(db, candidate_id)
+    pipeline = CandidateQualificationPipeline(db)
+    try:
+        return await pipeline.qualify(candidate, site_index_engines=(payload.site_index_engines if payload else None))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/candidates/{candidate_id}/weight-check", response_model=DomainCandidateOut)
+async def refresh_candidate_weight(
+    candidate_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    payload: CandidateWeightCheckRequest | None = Body(default=None),
+) -> DomainCandidate:
+    candidate = _get_candidate_or_404(db, candidate_id)
+    pipeline = CandidateQualificationPipeline(db)
+    weight_seed = (
+        {key: value for key, value in payload.model_dump(exclude_none=True).items() if value not in {None, ""}}
+        if payload
+        else None
+    )
+    weight_seed = weight_seed or None
+    try:
+        return await pipeline.qualify(candidate, weight_seed=weight_seed, force_weight_refresh=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/candidates/{candidate_id}/intel", response_model=DomainCandidateOut)
+async def refresh_candidate_intel(candidate_id: int, db: Annotated[Session, Depends(get_db)]) -> DomainCandidate:
+    candidate = _get_candidate_or_404(db, candidate_id)
+    pipeline = CandidateQualificationPipeline(db)
+    try:
+        return await pipeline.refresh_intel(candidate)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/candidates/{candidate_id}/promote", response_model=LeadOut)
+async def promote_candidate(
+    candidate_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    payload: CandidatePromoteRequest | None = Body(default=None),
+) -> DomainLead:
+    candidate = _get_candidate_or_404(db, candidate_id)
+    pipeline = CandidateQualificationPipeline(db)
+    try:
+        return await pipeline.promote(candidate, auto_crawl=(payload.auto_crawl if payload else True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/candidates/batch-qualify")
+async def batch_qualify_candidates(
+    payload: CandidateBatchQualifyRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, int]:
+    pipeline = CandidateQualificationPipeline(db)
+    return await pipeline.batch_qualify(
+        status=payload.status,
+        keyword=payload.keyword,
+        limit=payload.limit,
+        site_index_engines=payload.site_index_engines or None,
+    )
 
 
 @app.post("/api/providers/{provider_id}/preview")
@@ -643,6 +808,16 @@ def get_email_template(lead_id: int, db: Annotated[Session, Depends(get_db)]) ->
     }
 
 
+@app.get("/api/settings/email", response_model=EmailSettingsOut)
+def get_email_settings(db: Annotated[Session, Depends(get_db)]) -> dict[str, object]:
+    return serialize_email_settings(db)
+
+
+@app.put("/api/settings/email", response_model=EmailSettingsOut)
+def update_email_settings(payload: EmailSettingsUpdate, db: Annotated[Session, Depends(get_db)]) -> dict[str, object]:
+    return save_email_settings(db, payload.model_dump())
+
+
 @app.post("/api/leads/{lead_id}/send-email", response_model=EmailSendResponse)
 def send_email_for_lead(lead_id: int, payload: EmailSendRequest, db: Annotated[Session, Depends(get_db)]) -> EmailSendResponse:
     lead = db.get(DomainLead, lead_id)
@@ -678,6 +853,7 @@ def clear_all(db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
     db.execute(delete(CrawlLog))
     db.execute(delete(CrawlTask))
     db.execute(delete(DiscoveryTask))
+    db.execute(delete(DomainCandidate))
     db.execute(delete(EmailLog))
     db.execute(delete(LeadActivity))
     db.execute(delete(DomainLead))

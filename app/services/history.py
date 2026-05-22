@@ -4,12 +4,12 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.models import DomainLead
 from app.services.activities import build_activity
 from app.services.scoring import normalize_domain
+from app.services.scrapling_fetch import build_url, create_scrapling_session, raise_for_status, response_json, response_url
 
 WAYBACK_CDX_URL = "https://web.archive.org/cdx/search/cdx"
 WAYBACK_AVAILABLE_URL = "https://archive.org/wayback/available"
@@ -50,13 +50,13 @@ async def lookup_archive_history(domain: str, *, timeout_seconds: int = 15) -> A
         "collapse": "timestamp:8",
         "limit": ARCHIVE_SAMPLE_LIMIT,
     }
-    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True) as client:
+    async with create_scrapling_session(timeout_seconds=timeout_seconds) as client:
         try:
-            response = await client.get(WAYBACK_CDX_URL, params=params)
-            response.raise_for_status()
-            payload = response.json()
+            response = await client.get(build_url(WAYBACK_CDX_URL, params))
+            raise_for_status(response)
+            payload = response_json(response)
             if not isinstance(payload, list):
-                return ArchiveHistoryResult(status="UNKNOWN", source_url=str(response.url), error="Wayback 返回格式异常")
+                return ArchiveHistoryResult(status="UNKNOWN", source_url=response_url(response), error="Wayback 返回格式异常")
 
             rows = payload[1:] if payload and isinstance(payload[0], list) else payload
             timestamps = [
@@ -66,14 +66,14 @@ async def lookup_archive_history(domain: str, *, timeout_seconds: int = 15) -> A
                 for parsed in [_parse_wayback_timestamp(str(row[0] or ""))]
                 if parsed is not None
             ]
-            latest_response = await client.get(WAYBACK_AVAILABLE_URL, params={"url": normalized})
-            latest_response.raise_for_status()
-            latest_payload = latest_response.json()
+            latest_response = await client.get(build_url(WAYBACK_AVAILABLE_URL, {"url": normalized}))
+            raise_for_status(latest_response)
+            latest_payload = response_json(latest_response)
             closest = latest_payload.get("archived_snapshots", {}).get("closest", {}) if isinstance(latest_payload, dict) else {}
             latest_seen_at = _parse_wayback_timestamp(str(closest.get("timestamp") or "")) if closest else None
 
             if not timestamps and latest_seen_at is None:
-                return ArchiveHistoryResult(status="NO_ARCHIVE", source_url=str(response.url))
+                return ArchiveHistoryResult(status="NO_ARCHIVE", source_url=response_url(response))
 
             first_seen_at = min(timestamps) if timestamps else latest_seen_at
             last_seen_at = latest_seen_at or max(timestamps)
@@ -84,7 +84,7 @@ async def lookup_archive_history(domain: str, *, timeout_seconds: int = 15) -> A
                 last_seen_at=last_seen_at,
                 snapshot_count=max(len(timestamps), 1 if latest_seen_at else 0),
                 active_years=active_years,
-                source_url=str(response.url),
+                source_url=response_url(response),
             )
         except Exception as exc:  # noqa: BLE001
             return ArchiveHistoryResult(status="UNKNOWN", error=str(exc) or exc.__class__.__name__)

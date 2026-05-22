@@ -9,8 +9,7 @@
 - SQLite
 - SQLAlchemy
 - Jinja2 + 原生 JavaScript
-- Scrapling FetcherSession + BeautifulSoup / lxml（站点抓取与解析）
-- httpx（RDAP / Bing / Wayback 等外部请求）
+- Scrapling FetcherSession + BeautifulSoup / lxml（站点抓取、搜索发现、RDAP / Wayback 外部请求与解析）
 - Provider 数据源插件层
 - 批量抓取任务中心
 

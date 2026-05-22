@@ -118,7 +118,7 @@ def _ensure_sqlite_columns() -> None:
 
 
 def init_db() -> None:
-    from app.models.domain_lead import CrawlLog, CrawlTask, DiscoveryTask, DomainLead, EmailLog, LeadActivity  # noqa: F401
+    from app.models.domain_lead import AppSetting, CrawlLog, CrawlTask, DiscoveryTask, DomainCandidate, DomainLead, EmailLog, LeadActivity  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_columns()

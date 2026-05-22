@@ -25,11 +25,22 @@ const analysisStatusMap = {
   FAILED: '分析失败',
 };
 
+const candidateStatusMap = {
+  DISCOVERED: '已发现',
+  REJECTED: '已淘汰',
+  NEED_WEIGHT: '待补权重',
+  NEED_SITE_INDEX: '待补索引',
+  QUALIFIED: '已合格',
+  PROMOTED: '已入库',
+};
+
 let leads = [];
 let tasks = [];
 let discoveryTasks = [];
+let candidates = [];
 let currentLead = null;
 let providers = [];
+let searchEngines = [];
 let currentEmailLogs = [];
 let currentActivities = [];
 let currentProfile = null;
@@ -84,6 +95,15 @@ function buildQuery(params) {
   return qs.toString();
 }
 
+function parseJsonField(value, fallback) {
+  try {
+    const parsed = JSON.parse(value || '');
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function apiJson(url, options = {}) {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -112,6 +132,15 @@ async function loadProviders() {
     .join('');
 }
 
+async function loadSearchEngines() {
+  searchEngines = await apiJson('/api/search-engines');
+  const select = $('#radarSearchEngines');
+  if (!select) return;
+  select.innerHTML = searchEngines
+    .map((engine) => `<option value="${escapeHtml(engine.provider_id)}" selected>${escapeHtml(engine.name)}</option>`)
+    .join('');
+}
+
 async function loadLeads() {
   const qs = buildQuery(getFilters());
   leads = await apiJson(`/api/leads?${qs}`);
@@ -127,6 +156,16 @@ async function loadTasks() {
 async function loadDiscoveryTasks() {
   discoveryTasks = await apiJson('/api/discovery/tasks?limit=30');
   renderDiscoveryTasks();
+}
+
+async function loadCandidates() {
+  const qs = buildQuery({
+    status: $('#candidateStatusFilter') ? $('#candidateStatusFilter').value : '',
+    keyword: $('#candidateKeyword') ? $('#candidateKeyword').value.trim() : '',
+    limit: 100,
+  });
+  candidates = await apiJson(`/api/candidates?${qs}`);
+  renderCandidates();
 }
 
 function renderStats() {
@@ -308,6 +347,84 @@ function renderDiscoveryTasks() {
     .join('');
 }
 
+function candidateStatusBadge(status) {
+  const cls = status === 'QUALIFIED' || status === 'PROMOTED' ? 'good' : status === 'REJECTED' ? 'risk' : 'warn';
+  return `<span class="badge ${cls}">${candidateStatusMap[status] || status}</span>`;
+}
+
+function candidateSiteIndexSummary(candidate) {
+  const snapshot = parseJsonField(candidate.site_index_snapshot, {});
+  const results = Array.isArray(snapshot.results) ? snapshot.results : [];
+  if (!results.length) return '-';
+  return results
+    .map((item) => {
+      const count = Number.isInteger(item.count) ? item.count.toLocaleString() : '异常';
+      return `${item.engine}:${count}`;
+    })
+    .join(' / ');
+}
+
+function candidateWeightSummary(candidate) {
+  const snapshot = parseJsonField(candidate.weight_snapshot, {});
+  const weights = snapshot.weights || {};
+  const values = ['baidu_pc_weight', 'baidu_mobile_weight', 'sogou_weight', 'so_weight', 'sm_weight', 'toutiao_weight', 'bing_weight']
+    .map((key) => Number(weights[key] || 0));
+  const maxWeight = values.length ? Math.max(...values) : 0;
+  const nature = snapshot.site_nature || '-';
+  if (!snapshot.status) return '-';
+  return `最高 ${maxWeight} / ${nature}`;
+}
+
+function candidateIntelSummary(candidate) {
+  const whois = parseJsonField(candidate.whois_snapshot, {});
+  const ip = parseJsonField(candidate.ip_snapshot, {});
+  const whoisResults = Array.isArray(whois.results) ? whois.results : [];
+  const registrar = whoisResults.find((item) => item.registrar)?.registrar || '-';
+  const isp = ip.isp || ip.org || '-';
+  const domestic = ip.is_domestic ? '国内' : ip.country || '';
+  return `${registrar} / ${isp}${domestic ? ` / ${domestic}` : ''}`;
+}
+
+function renderCandidates() {
+  const tbody = $('#candidateRows');
+  if (!tbody) return;
+  if (!candidates.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">暂无候选，请先执行雷达搜索。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = candidates
+    .map((candidate) => {
+      const sourceEngines = parseJsonField(candidate.search_engines, []);
+      const keywords = parseJsonField(candidate.keywords, []);
+      return `
+        <tr>
+          <td class="domain-cell">
+            <strong><a class="domain-link" href="https://${escapeHtml(candidate.domain)}" target="_blank" rel="noopener noreferrer">${escapeHtml(candidate.domain)}</a></strong>
+            <div class="muted ellipsis">${escapeHtml(candidate.title || '-')}</div>
+          </td>
+          <td>
+            <div>${escapeHtml(sourceEngines.join(' / ') || candidate.search_engine || '-')}</div>
+            <div class="muted ellipsis">${escapeHtml(keywords.join('，') || candidate.keyword || '-')}</div>
+          </td>
+          <td>${candidateStatusBadge(candidate.status)}<div class="muted">优先级 ${candidate.priority_score || 0}</div></td>
+          <td>${escapeHtml(candidateSiteIndexSummary(candidate))}</td>
+          <td>${escapeHtml(candidateWeightSummary(candidate))}</td>
+          <td class="muted ellipsis">${escapeHtml(candidateIntelSummary(candidate))}</td>
+          <td class="muted ellipsis">${escapeHtml(candidate.reject_reason || '-')}</td>
+          <td>
+            <div class="row-actions">
+              <button onclick="qualifyCandidate(${candidate.id})">预筛</button>
+              <button onclick="fillCandidateWeight(${candidate.id})">补权重</button>
+              <button onclick="refreshCandidateIntel(${candidate.id})">情报</button>
+              <button onclick="promoteCandidate(${candidate.id})">入库</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
 async function loadCrawlLogs(leadId) {
   const logs = await apiJson(`/api/leads/${leadId}/crawl/logs?limit=30`);
   const box = $('#crawlLogs');
@@ -483,7 +600,7 @@ async function refreshWorkspaceView(view) {
     return;
   }
   if (view === 'discovery') {
-    await loadDiscoveryTasks();
+    await Promise.all([loadCandidates(), loadDiscoveryTasks()]);
   }
 }
 
@@ -662,6 +779,121 @@ async function batchHistoryCurrentFilters() {
   } finally {
     $('#batchHistoryBtn').disabled = false;
   }
+}
+
+function selectedRadarSearchEngines() {
+  const select = $('#radarSearchEngines');
+  if (!select) return ['baidu', 'bing'];
+  return Array.from(select.selectedOptions).map((option) => option.value).filter(Boolean);
+}
+
+async function radarDiscovery() {
+  const mode = $('#radarKeywordMode').value;
+  const keywords = $('#radarKeywords').value.trim();
+  if (mode === 'manual' && !keywords) {
+    toast('请输入关键词，或切换到随机词库');
+    return;
+  }
+  const engines = selectedRadarSearchEngines();
+  if (!engines.length) {
+    toast('请至少选择一个搜索引擎');
+    return;
+  }
+  const limit = Number(prompt('每个搜索引擎/关键词最多提取多少个候选？建议 5～10。', '10') || 0);
+  if (!limit) return;
+  $('#radarDiscoveryBtn').disabled = true;
+  try {
+    const result = await apiJson('/api/radar/discovery/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        keywords,
+        keyword_mode: mode,
+        search_engines: engines,
+        limit,
+        auto_qualify: false,
+      }),
+    });
+    const errorText = (result.errors || []).length ? `，错误 ${result.errors.length} 条` : '';
+    toast(`雷达搜索完成：新增 ${result.created}，更新 ${result.updated}，过滤 ${result.rejected}${errorText}`);
+    await loadCandidates();
+  } finally {
+    $('#radarDiscoveryBtn').disabled = false;
+  }
+}
+
+async function batchQualifyCandidates() {
+  const limit = Number(prompt('本次最多预筛多少条候选？', '20') || 0);
+  if (!limit) return;
+  $('#batchQualifyCandidatesBtn').disabled = true;
+  try {
+    const result = await apiJson('/api/candidates/batch-qualify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: $('#candidateStatusFilter').value,
+        keyword: $('#candidateKeyword').value.trim(),
+        limit,
+        site_index_engines: selectedRadarSearchEngines(),
+      }),
+    });
+    toast(`预筛完成：合格 ${result.qualified}，淘汰 ${result.rejected}，待补权重 ${result.need_weight}，待补索引 ${result.need_site_index}`);
+    await loadCandidates();
+  } finally {
+    $('#batchQualifyCandidatesBtn').disabled = false;
+  }
+}
+
+async function qualifyCandidate(id) {
+  await apiJson(`/api/candidates/${id}/site-index`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ site_index_engines: selectedRadarSearchEngines() }),
+  });
+  toast('候选预筛已执行');
+  await loadCandidates();
+}
+
+async function fillCandidateWeight(id) {
+  const weightsText = prompt('输入权重：百度PC,百度移动,搜狗,360,神马,头条,必应', '1,0,0,0,0,0,0');
+  if (!weightsText) return;
+  const siteNature = prompt('网站性质/备案主体，例如：个人', '个人');
+  if (!siteNature) return;
+  const values = weightsText.split(/[,，\s]+/).map((item) => Number(item || 0));
+  const payload = {
+    baidu_pc_weight: values[0] || 0,
+    baidu_mobile_weight: values[1] || 0,
+    sogou_weight: values[2] || 0,
+    so_weight: values[3] || 0,
+    sm_weight: values[4] || 0,
+    toutiao_weight: values[5] || 0,
+    bing_weight: values[6] || 0,
+    site_nature: siteNature,
+  };
+  await apiJson(`/api/candidates/${id}/weight-check`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  toast('权重/网站性质已补充并预筛');
+  await loadCandidates();
+}
+
+async function refreshCandidateIntel(id) {
+  await apiJson(`/api/candidates/${id}/intel`, { method: 'POST' });
+  toast('Whois/IP 情报已刷新');
+  await loadCandidates();
+}
+
+async function promoteCandidate(id) {
+  if (!confirm('确认将该候选转入正式线索库？合格候选会自动抓取联系方式。')) return;
+  await apiJson(`/api/candidates/${id}/promote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto_crawl: true }),
+  });
+  toast('已转入正式线索库');
+  await Promise.all([loadCandidates(), loadLeads(), loadTasks()]);
 }
 
 async function keywordDiscovery() {
@@ -890,6 +1122,13 @@ function initEvents() {
   $('#batchAnalysisBtn').addEventListener('click', batchAnalyzeCurrentFilters);
   $('#batchRegistrationBtn').addEventListener('click', batchRegistrationCurrentFilters);
   $('#batchHistoryBtn').addEventListener('click', batchHistoryCurrentFilters);
+  $('#radarDiscoveryBtn').addEventListener('click', radarDiscovery);
+  $('#batchQualifyCandidatesBtn').addEventListener('click', batchQualifyCandidates);
+  $('#refreshCandidatesBtn').addEventListener('click', loadCandidates);
+  $('#candidateKeyword').addEventListener('keydown', async (event) => {
+    if (event.key === 'Enter') await loadCandidates();
+  });
+  $('#candidateStatusFilter').addEventListener('change', loadCandidates);
   $('#keywordDiscoveryBtn').addEventListener('click', keywordDiscovery);
   $('#searchDiscoveryBtn').addEventListener('click', searchDiscovery);
   $('#externalDiscoveryBtn').addEventListener('click', externalLinkDiscovery);
@@ -929,4 +1168,4 @@ function initEvents() {
 }
 
 initEvents();
-Promise.all([loadProviders(), loadLeads(), loadTasks(), loadDiscoveryTasks()]).catch((error) => toast(error.message));
+Promise.all([loadProviders(), loadSearchEngines(), loadLeads(), loadTasks(), loadDiscoveryTasks(), loadCandidates()]).catch((error) => toast(error.message));
